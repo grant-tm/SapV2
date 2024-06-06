@@ -7,8 +7,8 @@
 struct FileRecord {
     std::string file_path;
     std::string file_name;
-    int file_size;
     
+    int file_size;
     int duration;
     
     int num_user_tags;
