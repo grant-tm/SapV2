@@ -1,14 +1,128 @@
-#include "..\inc\Database.h"
+#include "Database.h"
 
-// checks if the given database table exists
-bool db_table_valid (sqlite3* db, const std::string& table_name) {
-    
-    // prepare statement to select 1 element from db and table
-    std::string sql = "SELECT 1 FROM " + table_name + " LIMIT 1;";
-    sqlite3_stmt* stmt;
-    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
-        panicf("db_table_valid: Failed to prepare statement.\n");
+//-----------------------------------------------------------------------------
+// concat_cstrs
+// ----------------------------------------------------------------------------
+// Concatenate num_strings c-style strings in order.
+// This function allocates memory that must be freed.
+//-----------------------------------------------------------------------------
+char *concat_cstrs
+(
+    int num_strings, 
+    ...
+){
+    // calculate total length of final string
+    va_list args;
+    int total_length = 0;
+    va_start(args, num_strings);
+    for (int i = 0; i < num_strings; i++) {
+        const char *str = va_arg(args, const char *);
+        total_length += strlen(str);
     }
+    va_end(args);
+
+    // allocate memory for the resulting string
+    char *result = new char[total_length + 1];
+    result[0] = '\0';
+
+    // Concatenate all strings into the result
+    va_start(args, num_strings);
+    for (int i = 0; i < num_strings; ++i) {
+        const char *str = va_arg(args, const char *);
+        strcat_s(result, total_length + 1, str);
+    }
+    va_end(args);
+
+    return result;
+}
+
+//-----------------------------------------------------------------------------
+// Database::Database (default)
+// ----------------------------------------------------------------------------
+// Default constructor for a Database.
+// This is not intended to be used.
+//-----------------------------------------------------------------------------
+Database::Database
+(
+    void
+){
+    this->db = nullptr;
+}
+
+//-----------------------------------------------------------------------------
+// Database::Database (const char *)
+// ----------------------------------------------------------------------------
+// Opens or creates an sqlite database named db_name.
+//-----------------------------------------------------------------------------
+Database::Database
+(
+    const char *db_name
+){
+    int flags = SQLITE_OPEN_READWRITE | 
+                SQLITE_OPEN_CREATE | 
+                SQLITE_OPEN_FULLMUTEX;
+    
+    if (sqlite3_open_v2(db_name, &this->db, flags, NULL) == SQLITE_OK) {
+        this->init();
+    } 
+    else {
+        errlog("Database::Database: Cannot open database.\n");
+        this->db = nullptr;
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Database::init
+// ----------------------------------------------------------------------------
+// Sets up the audio_files table if it doesn't already exist.
+//-----------------------------------------------------------------------------
+void
+Database::init
+(
+    void
+){
+    const char *sql =
+        "CREATE TABLE IF NOT EXISTS audio_files"\
+        "("\
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"\
+        "file_path TEXT UNIQUE,"\
+        "file_name TEXT NOT NULL,"\
+        "file_size INTEGER,"\
+        "duration REAL,"\
+        "num_user_tags INTEGER,"\
+        "user_tags TEXT NOT NULL,"\
+        "num_auto_tags INTEGER,"\
+        "auto_tags TEXT NOT NULL,"\
+        "user_bpm INTEGER,"\
+        "user_key INTEGER,"\
+        "auto_bpm INTEGER,"\
+        "auto_key INTEGER"\
+        ");";
+
+    char *err_msg = nullptr;
+    if (sqlite3_exec(this->db, sql, nullptr, nullptr, &err_msg) != SQLITE_OK) {
+        sqlite3_free(err_msg);
+        errlog("Database::init: Error creating table.\n");
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Database::table_is_valid
+// ----------------------------------------------------------------------------
+// Checks if a database table exists.
+//-----------------------------------------------------------------------------
+bool 
+Database::table_is_valid 
+(
+    const char *table_name
+){
+    // prepare statement to select 1 element from db and table
+    char *sql = concat_cstrs(3, "SELECT 1 FROM ", table_name, " LIMIT 1;");
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(this->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        errlog("Database::table_is_valid: Failed to prepare statement.\n");
+    }
+    delete[] sql;
     
     // execute statement: db table is valid if execution return matches row
     bool valid = (sqlite3_step(stmt) == SQLITE_ROW);
@@ -16,84 +130,66 @@ bool db_table_valid (sqlite3* db, const std::string& table_name) {
     return valid;
 }
 
-// print the number of rows in a databse table
-int db_get_num_rows (sqlite3 *db, const std::string& table_name) {
-
+//-----------------------------------------------------------------------------
+// Database::num_rows
+// ----------------------------------------------------------------------------
+// Returns the number of rows in a database table.
+//-----------------------------------------------------------------------------
+int 
+Database::num_rows
+( 
+    const char *table_name
+){
     // prepare statement to select the count of all rows in the table
     sqlite3_stmt* stmt;
-    std::string sql = "SELECT COUNT(*) FROM " + table_name;  
-    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
-        sqlite3_close(db);
-        panicf("db_print_num_rows: Failed to prepare statement.\n");
+    char *sql = concat_cstrs(2, "SELECT COUNT(*) FROM ", table_name);
+    if (sqlite3_prepare_v2(this->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        errlog("Database::num_rows: Failed to prepare statement.\n");
     }
+    delete[] sql;
 
     // execute the SELECT command
-    if (sqlite3_step(stmt) == SQLITE_ROW) [[likely]] {
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
         int row_count = sqlite3_column_int(stmt, 0);
         sqlite3_finalize(stmt);
         return row_count;
-    } else [[unlikely]] {
+    } else {
         sqlite3_finalize(stmt);
-        panicf("db_print_num_rows: Failed to execute SELECT COUNT(*)\n.");
+        errlog("Database::num_rows: Failed to execute sql statement.\n");
+        return 0;
     }
 }
 
-// prints the first n entries in a database table
-void db_print_n_rows(sqlite3* db, const std::string& table_name, int num_rows) {
-    
-    sqlite3_stmt* stmt;
-    std::string sql = "SELECT * FROM " + table_name + " LIMIT ?;";
-    
-    // prepare sql statement to select the first n entries in the databse
-    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
-        panicf("db_print_n_rows: Failed to prepare SELECT statement.\n");
-    }
-
-    // bind the limit value (number of entries to select) to the statement
-    if (sqlite3_bind_int(stmt, 1, num_rows) != SQLITE_OK) {
-        sqlite3_finalize(stmt);
-        panicf("db_print_n_rows: Failed to bind limit\n.");
-    }
-
-    // execute the SQL statement and print the result
-    int columnCount = sqlite3_column_count(stmt);
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
-        for (int col = 0; col < columnCount; ++col) {
-            
-            // select column name and content
-            const char* col_name = sqlite3_column_name(stmt, col);
-            const char* col_text = (const char*)sqlite3_column_text(stmt, col);
-            
-            // print the column contents
-            fprintf(stderr, "%s: ", col_name);
-            if (col_text) [[likely]] {
-                fprintf(stderr, "%s ", col_name);
-            } else {
-                fprintf(stderr, "NULL ");
-            }
-        }
-        fprintf(stderr, "\n");
-    }
-}
-
-// determines if an entry already exists in a database table
-// file paths are used as unique identifiers of table entries
-bool db_entry_exists (sqlite3* db, const std::string& table_name, 
-                    std::string file_path) {
+//-----------------------------------------------------------------------------
+// Database::entry_exists
+// ----------------------------------------------------------------------------
+// determines if an entry already exists in a database table file paths are 
+// used as unique identifiers of table entries
+//-----------------------------------------------------------------------------
+bool 
+Database::entry_exists
+(
+    const char *table_name,
+    const char *file_path
+){
 
     // prepare the SQL statement to select 1 entry with matching file_path
     sqlite3_stmt* stmt;
-    std::string sql = "SELECT 1 FROM " + table_name + 
-                      " WHERE file_path = ? LIMIT 1;";
-    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
-        panicf("db_entry_exists: Failed to prepare SELECT statement\n");
+    char *sql = concat_cstrs(
+        3, 
+        "SELECT 1 FROM ", 
+        table_name, 
+        " WHERE file_path = ? LIMIT 1;"
+    );
+    if (sqlite3_prepare_v2(this->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        errlog("Database::entry_exists: Failed to prepare SELECT statement\n");
     }
+    delete[] sql;
 
     // bind the file path to the select statment
-    if (sqlite3_bind_text(stmt, 1, file_path.c_str(), -1, 
-        SQLITE_TRANSIENT) != SQLITE_OK) {
-        sqlite3_finalize(stmt);
-        panicf("db_entry_exists: Failed to bind values.\n");
+    int result = sqlite3_bind_text(stmt, 1, file_path, -1, SQLITE_TRANSIENT);
+    if (result != SQLITE_OK) {
+        errlog("Database:entry_exists: Failed to bind values.\n");
     }
 
     // execute the SQL statement to check if the file exists
@@ -102,38 +198,36 @@ bool db_entry_exists (sqlite3* db, const std::string& table_name,
     return exists;
 }
 
-// set up the audio_files table if it doesn't already exist
-void db_initialize (sqlite3 *db) {
-    
-    const char* sql = "CREATE TABLE IF NOT EXISTS audio_files ("\
-                        "id INTEGER PRIMARY KEY AUTOINCREMENT,"\
-                        "file_path TEXT UNIQUE,"\
-                        "file_name TEXT NOT NULL,"\
-                        "file_size INTEGER,"\
-                        "duration REAL,"\
-                        "num_user_tags INTEGER,"\
-                        "user_tags TEXT NOT NULL,"\
-                        "num_auto_tags INTEGER,"\
-                        "auto_tags TEXT NOT NULL,"\
-                        "user_bpm INTEGER,"\
-                        "user_key INTEGER,"\
-                        "auto_bpm INTEGER,"\
-                        "auto_key INTEGER"\
-                    ");";
-
-    char* err_msg = nullptr;
-    if (sqlite3_exec(db, sql, nullptr, nullptr, &err_msg) != SQLITE_OK) {
-        sqlite3_free(err_msg);
-        panicf("db_initialize: Error creating table\n");
+//-----------------------------------------------------------------------------
+// Database::insert_file
+// ----------------------------------------------------------------------------
+// This function works inserts a single file into the database
+//-----------------------------------------------------------------------------
+void 
+Database::insert_file(
+    struct FileRecord *file
+){
+    // create statement to insert all members of explorer file struct
+    const char *sql = "INSERT OR IGNORE INTO audio_files ("\
+        "file_path,"\
+        "file_name,"\
+        "file_size,"\
+        "duration,"\
+        "num_user_tags,"\
+        "user_tags,"\
+        "num_auto_tags,"\
+        "auto_tags,"\
+        "user_bpm,"\
+        "user_key,"\
+        "auto_bpm,"\
+        "auto_key"\
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(this->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        errlog("Database::insert_files: Error preparing statement.\n");
+        return;
     }
-}
 
-// this function works in conjunction with db_insert_files to submit files in
-// transactions. This allows the reuse of a sqlite3_stmt, which is much
-// faster than inserting entries one at a time
-void db_insert_file(sqlite3 *db, const struct FileRecord *file, 
-                    sqlite3_stmt *stmt) {
-    
     // bind the FileRecord data to the INSERT statement arguments
     sqlite3_bind_text(stmt, 1, file->file_path.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 2, file->file_name.c_str(), -1, SQLITE_STATIC);
@@ -149,103 +243,141 @@ void db_insert_file(sqlite3 *db, const struct FileRecord *file,
     sqlite3_bind_int(stmt, 12, file->auto_key);
     
     if (sqlite3_step(stmt) != SQLITE_DONE) {
-        panicf("db_insert_file: Error inserting data.\n");
+        errlog("Database::insert_file: Error inserting data.\n");
     }
 
     // reset the statement for reuse
     sqlite3_reset(stmt); 
 }
 
-// db_insert_files inserts entries in the audio_files database table
-// data to insert comes from a vector of FileRecord structs
-void db_insert_files (sqlite3 *db, ThreadSafeQueue<struct FileRecord *> *files) {
-
+//-----------------------------------------------------------------------------
+// Database::insert_files
+// ----------------------------------------------------------------------------
+// db_insert_files inserts entries in the audio_files database table data to 
+// insert comes from a vector of FileRecord structs
+//-----------------------------------------------------------------------------
+void 
+Database::insert_files (
+    ThreadSafeQueue<struct FileRecord *> *files
+) {
     // create statement to insert all members of explorer file struct
     const char* sql =   "INSERT OR IGNORE INTO audio_files ("\
-                            "file_path,"\
-                            "file_name,"\
-                            "file_size,"\
-                            "duration,"\
-                            "num_user_tags,"\
-                            "user_tags,"\
-                            "num_auto_tags,"\
-                            "auto_tags,"\
-                            "user_bpm,"\
-                            "user_key,"\
-                            "auto_bpm,"\
-                            "auto_key)"\
-                            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                        "file_path,"\
+                        "file_name,"\
+                        "file_size,"\
+                        "duration,"\
+                        "num_user_tags,"\
+                        "user_tags,"\
+                        "num_auto_tags,"\
+                        "auto_tags,"\
+                        "user_bpm,"\
+                        "user_key,"\
+                        "auto_bpm,"\
+                        "auto_key"\
+                        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     sqlite3_stmt* stmt = nullptr;
-    
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        panicf("db_insert_files: Error preparing statemen.\n");
+        panicf("db_insert_files: Error preparing statement.\n");
     } 
 
     // insert files in a single transaction
-    sqlite3_exec(db, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
+    sqlite3_exec(this->db, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
     while (!files->empty()) {
+        
         struct FileRecord* file;
         files->wait_pop(file);
-        db_insert_file(db, file, stmt);
+        
+        sqlite3_bind_text(stmt, 1, file->file_path.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, file->file_name.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_int(stmt, 3, file->file_size);
+        sqlite3_bind_double(stmt, 4, file->duration);
+        sqlite3_bind_int(stmt, 5, file->num_user_tags);
+        sqlite3_bind_text(stmt, 6, file->user_tags.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_int(stmt, 7, file->num_auto_tags);
+        sqlite3_bind_text(stmt, 8, file->auto_tags.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_int(stmt, 9, file->user_bpm);
+        sqlite3_bind_int(stmt, 10, file->user_key);
+        sqlite3_bind_int(stmt, 11, file->auto_bpm);
+        sqlite3_bind_int(stmt, 12, file->auto_key);
+
+        if (sqlite3_step(stmt) != SQLITE_DONE) {
+            fprintf(stderr, "db_insert_file: Error inserting data.\n");
+        }
+        sqlite3_reset(stmt);
+        
         delete file;
     }
     sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
     sqlite3_finalize(stmt);
 }
 
+//-----------------------------------------------------------------------------
+// db_search_files_by_name
+// ----------------------------------------------------------------------------
 // Function to search files by name
-std::vector<FileRecord> db_search_files_by_name (sqlite3* db, 
-                                            const std::string& search_query) {
-    
+//-----------------------------------------------------------------------------
+std::vector<struct FileRecord>
+Database::search_by_name (
+    const char *query
+){
+    // prepare sql statement
     sqlite3_stmt* stmt;
-    std::string sql = "SELECT "\
-                    "file_path, "\
-                    "file_name, "\
-                    "file_size, "\
-                    "duration, "\
-                    "num_user_tags, "\
-                    "user_tags, "\
-                    "num_auto_tags, "\
-                    "auto_tags, "\
-                    "user_bpm, "\
-                    "user_key, "\
-                    "auto_bpm, "\
-                    "auto_key "\
-                    "FROM audio_files WHERE file_name LIKE ?;";
+    const char *sql =   "SELECT "\
+                        "file_path, "\
+                        "file_name, "\
+                        "file_size, "\
+                        "duration, "\
+                        "num_user_tags, "\
+                        "user_tags, "\
+                        "num_auto_tags, "\
+                        "auto_tags, "\
+                        "user_bpm, "\
+                        "user_key, "\
+                        "auto_bpm, "\
+                        "auto_key "\
+                        "FROM audio_files WHERE file_name LIKE ?;";
     
-    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
-        panicf("search_files_by_name: Failed to prepare statement.\n");
+    if (sqlite3_prepare_v2(this->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        errlog("Database::search_by_name: Failed to prepare sql statement.\n");
     }
     
     // Bind the search query with wildcard characters for pattern matching
-    std::string query_param = "%" + search_query + "%";
-    sqlite3_bind_text(stmt, 1, query_param.c_str(), -1, SQLITE_STATIC);
-    
+    const char *query_param = concat_cstrs(3, "%", query, "%");
+    int result = sqlite3_bind_text(stmt, 1, query_param, -1, SQLITE_STATIC);
+    if (result != SQLITE_OK) {
+        errlog("Database::search_by_name: Failed to bind sql statement.\n");
+    }
+    delete[] query_param;
+
     // Execute the statement and process the results
-    std::vector<FileRecord> results;
+    std::vector<FileRecord> search_result;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         struct FileRecord file;
         
         file.file_path = reinterpret_cast<const char*>(
-            sqlite3_column_text(stmt, 0));
+                            sqlite3_column_text(stmt, 0)
+                         );
         file.file_name = reinterpret_cast<const char*>(
-            sqlite3_column_text(stmt, 1));
+                            sqlite3_column_text(stmt, 1)
+                         );
         file.file_size = sqlite3_column_int(stmt, 2);
         file.duration = sqlite3_column_int(stmt, 3);
         file.num_user_tags = sqlite3_column_int(stmt, 4);
         file.user_tags = reinterpret_cast<const char*>(
-            sqlite3_column_text(stmt, 5));
+                            sqlite3_column_text(stmt, 5)
+                        );
         file.num_auto_tags = sqlite3_column_int(stmt, 6);
         file.auto_tags = reinterpret_cast<const char*>(
-            sqlite3_column_text(stmt, 7));
+                            sqlite3_column_text(stmt, 7)
+                         );
         file.user_bpm = sqlite3_column_int(stmt, 8);
         file.user_key = sqlite3_column_int(stmt, 9);
         file.auto_bpm = sqlite3_column_int(stmt, 10);
         file.auto_key = sqlite3_column_int(stmt, 11);
 
-        results.push_back(file);
+        search_result.push_back(file);
     }
     
     sqlite3_finalize(stmt);
-    return results;
+    return search_result;
 }
