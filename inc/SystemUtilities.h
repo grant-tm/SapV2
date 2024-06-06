@@ -6,7 +6,9 @@
 #include <cstdlib>
 #include <cstdarg>
 
-void panicf [[noreturn]] (const char* msg, ...);
+void errlog (const char *msg, ...);
+
+void panicf (const char* msg, ...);
 
 void quit (void);
 
