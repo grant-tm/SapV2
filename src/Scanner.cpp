@@ -1,4 +1,5 @@
 #include "Scanner.h"
+#include <iostream>
 
 // These delimiters are used to automatically generate tags from filenames
 bool inline char_is_delimiter (char ch) {
@@ -39,7 +40,7 @@ char to_lower (char c) {
 
 // check if file extension is .mp3 or .wav
 bool validate_file_extension (const fs::directory_entry *file) {    
-    auto extension = to_string(file->path().extension());
+    auto extension = file->path().extension().string();
     if (extension == ".mp3" || extension == ".wav") {
         return true;
     } else {
@@ -204,11 +205,16 @@ void process_queued_files (Database *db,
 // given a directory entry, find and record attributes in FileRecord struct
 struct FileRecord *process_file (const fs::directory_entry &file) {
 
-    std::string extension = to_string(file.path().extension());
+    std::string extension = file.path().extension().string();
     if (extension == std::string(".wav")) {
-        WAV wav(file.path());
-        wav.parse();
-        wav.close();
+        try {
+            WAV wav(file.path());
+            wav.parse();
+            wav.close();
+        }
+        catch (...) {
+            errlog("Exception thrown\n");
+        }
     }
 
     // allocate memory for entry parameters
