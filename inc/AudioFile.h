@@ -8,25 +8,17 @@
 #include <bitset>
 #include <string.h>
 #include <omp.h>
+#include <iostream>
+#include <math.h>
+
+#include <windows.h>
+#include <cstring>
+#include <stdexcept>
 
 #include "SystemUtilities.h"
+#include "ByteExtractor.h"
 
 namespace fs = std::filesystem;
-
-bool bitcmp (std::vector<char> *, const char *);
-int bytes_to_int(std::vector<char> *);
-
-//=============================================================================
-// Byte Extractor - read n bytes from an input stream
-//=============================================================================
-class ByteExtractor : public std::ifstream {
-public:
-	ByteExtractor(fs::path);
-	char read_byte (void);
-	std::vector<char> read_bytes (int);
-	int read_int (int);
-	bool read_string(const char *);
-};
 
 //=============================================================================
 // Audio File base class
@@ -50,14 +42,16 @@ public:
 	// each audio file should implement this function
 	virtual void parse (void) = 0;
 
+	void print_file_path (void);
+
 protected:
+
+	fs::path file_path;
+	ByteExtractor *file;
+	
 	int sample_rate;
 	int num_channels;
 	std::vector<float> samples;
-	fs::path file_path;
-	
-	ByteExtractor *file;
-
 	
 };
 
@@ -68,7 +62,7 @@ class MP3 : public AudioFile {
 public:
 	MP3() : AudioFile() {};
 	MP3(fs::path path) : AudioFile(path) {};
-	void parse (void);
+	void parse (void) override;
 };
 
 //=============================================================================
@@ -78,7 +72,7 @@ class WAV : public AudioFile {
 public:
 	WAV() : AudioFile() {};
 	WAV(fs::path path) : AudioFile(path) {};
-	void parse (void);
+	void parse (void) override;
 };
 //=============================================================================
 // FLAC
@@ -87,7 +81,7 @@ class FLAC : public AudioFile {
 public:
 	FLAC() : AudioFile() {};
 	FLAC(fs::path path) : AudioFile(path) {};
-	void parse (void);
+	void parse (void) override;
 };
 
 #endif // Audio_File_h
