@@ -2,24 +2,27 @@
 #define FILE_RECORD_H
 
 // Standard Library Inclusions
+#include <filesystem>
 #include <string>
 
+namespace fs = std::filesystem;
+
 struct FileRecord {
-    std::string file_path;
-    std::string file_name;
+
+    std::wstring file_path;
+    std::wstring file_name;
+
+    size_t file_size;
     
-    int file_size;
-    int duration;
-    
+    // user-submitted data
     int num_user_tags;
-    std::string user_tags;
-    
-    int num_auto_tags;
-    std::string auto_tags;
-    
+    std::wstring user_tags;
     int user_bpm;
     int user_key;
-    
+
+    // auto-generated data
+    int num_auto_tags;
+    std::wstring auto_tags;
     int auto_bpm;
     int auto_key;
 };
