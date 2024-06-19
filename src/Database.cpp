@@ -1,16 +1,32 @@
 #include "Database.h"
 
+const char *wchar_to_char(const wchar_t *wstr) {
+    if (wstr == nullptr) {
+        return nullptr;
+    }
+
+    // Get the required buffer size for the conversion
+    int bufferSize = WideCharToMultiByte(CP_UTF8, 0, wstr, -1, nullptr, 0, nullptr, nullptr);
+    if (bufferSize == 0) {
+        return nullptr;
+    }
+
+    // Allocate memory for the result
+    char *result = new char[bufferSize];
+
+    // Perform the conversion
+    WideCharToMultiByte(CP_UTF8, 0, wstr, -1, result, bufferSize, nullptr, nullptr);
+
+    return result;
+}
+
 //-----------------------------------------------------------------------------
 // concat_cstrs
 // ----------------------------------------------------------------------------
 // Concatenate num_strings c-style strings in order.
 // This function allocates memory that must be freed.
 //-----------------------------------------------------------------------------
-char *concat_cstrs
-(
-    int num_strings, 
-    ...
-){
+char *concat_cstrs (int num_strings, ...){
     // calculate total length of final string
     va_list args;
     int total_length = 0;
@@ -42,10 +58,7 @@ char *concat_cstrs
 // Default constructor for a Database.
 // This is not intended to be used.
 //-----------------------------------------------------------------------------
-Database::Database
-(
-    void
-){
+Database::Database (void) {
     this->db = nullptr;
 }
 
@@ -54,10 +67,7 @@ Database::Database
 // ----------------------------------------------------------------------------
 // Opens or creates an sqlite database named db_name.
 //-----------------------------------------------------------------------------
-Database::Database
-(
-    const char *db_name
-){
+Database::Database (const char *db_name) {
     int flags = SQLITE_OPEN_READWRITE | 
                 SQLITE_OPEN_CREATE | 
                 SQLITE_OPEN_FULLMUTEX;
@@ -76,27 +86,22 @@ Database::Database
 // ----------------------------------------------------------------------------
 // Sets up the audio_files table if it doesn't already exist.
 //-----------------------------------------------------------------------------
-void
-Database::init
-(
-    void
-){
-    const char *sql =
-        "CREATE TABLE IF NOT EXISTS audio_files"\
+void Database::init (void) {
+    
+    const char *sql = "CREATE TABLE IF NOT EXISTS audio_files"\
         "("\
         "id INTEGER PRIMARY KEY AUTOINCREMENT,"\
         "file_path TEXT UNIQUE,"\
         "file_name TEXT NOT NULL,"\
         "file_size INTEGER,"\
-        "duration REAL,"\
-        "num_user_tags INTEGER,"\
-        "user_tags TEXT NOT NULL,"\
         "num_auto_tags INTEGER,"\
         "auto_tags TEXT NOT NULL,"\
-        "user_bpm INTEGER,"\
-        "user_key INTEGER,"\
         "auto_bpm INTEGER,"\
-        "auto_key INTEGER"\
+        "auto_key INTEGER,"\
+        "num_user_tags INTEGER,"\
+        "user_tags TEXT NOT NULL,"\
+        "user_bpm INTEGER,"\
+        "user_key INTEGER"\
         ");";
 
     char *err_msg = nullptr;
@@ -111,17 +116,16 @@ Database::init
 // ----------------------------------------------------------------------------
 // Checks if a database table exists.
 //-----------------------------------------------------------------------------
-bool 
-Database::table_is_valid 
-(
-    const char *table_name
-){
+bool Database::table_is_valid  (const char *table_name) {
+    
     // prepare statement to select 1 element from db and table
     char *sql = concat_cstrs(3, "SELECT 1 FROM ", table_name, " LIMIT 1;");
+    
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(this->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         errlog("Database::table_is_valid: Failed to prepare statement.\n");
     }
+    
     delete[] sql;
     
     // execute statement: db table is valid if execution return matches row
@@ -135,17 +139,15 @@ Database::table_is_valid
 // ----------------------------------------------------------------------------
 // Returns the number of rows in a database table.
 //-----------------------------------------------------------------------------
-int 
-Database::num_rows
-( 
-    const char *table_name
-){
+int Database::num_rows (const char *table_name) {
     // prepare statement to select the count of all rows in the table
     sqlite3_stmt* stmt;
+    
     char *sql = concat_cstrs(2, "SELECT COUNT(*) FROM ", table_name);
     if (sqlite3_prepare_v2(this->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         errlog("Database::num_rows: Failed to prepare statement.\n");
     }
+    
     delete[] sql;
 
     // execute the SELECT command
@@ -167,11 +169,7 @@ Database::num_rows
 // used as unique identifiers of table entries
 //-----------------------------------------------------------------------------
 bool 
-Database::entry_exists
-(
-    const char *table_name,
-    const char *file_path
-){
+Database::entry_exists (const char *table_name, std::wstring *file_path){
 
     // prepare the SQL statement to select 1 entry with matching file_path
     sqlite3_stmt* stmt;
@@ -184,10 +182,16 @@ Database::entry_exists
     if (sqlite3_prepare_v2(this->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         errlog("Database::entry_exists: Failed to prepare SELECT statement\n");
     }
+    
     delete[] sql;
 
     // bind the file path to the select statment
-    int result = sqlite3_bind_text(stmt, 1, file_path, -1, SQLITE_TRANSIENT);
+    int result = sqlite3_bind_text16(
+        stmt, 
+        1, 
+        file_path->c_str(), 
+        -1, 
+        SQLITE_TRANSIENT);
     if (result != SQLITE_OK) {
         errlog("Database:entry_exists: Failed to bind values.\n");
     }
@@ -203,16 +207,12 @@ Database::entry_exists
 // ----------------------------------------------------------------------------
 // This function works inserts a single file into the database
 //-----------------------------------------------------------------------------
-void 
-Database::insert_file(
-    struct FileRecord *file
-){
+void Database::insert_file (struct FileRecord *file) {
     // create statement to insert all members of explorer file struct
     const char *sql = "INSERT OR IGNORE INTO audio_files ("\
         "file_path,"\
         "file_name,"\
         "file_size,"\
-        "duration,"\
         "num_user_tags,"\
         "user_tags,"\
         "num_auto_tags,"\
@@ -221,7 +221,7 @@ Database::insert_file(
         "user_key,"\
         "auto_bpm,"\
         "auto_key"\
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     sqlite3_stmt *stmt = nullptr;
     if (sqlite3_prepare_v2(this->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         errlog("Database::insert_files: Error preparing statement.\n");
@@ -229,14 +229,14 @@ Database::insert_file(
     }
 
     // bind the FileRecord data to the INSERT statement arguments
-    sqlite3_bind_text(stmt, 1, file->file_path.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 2, file->file_name.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text16(stmt, 1, file->file_path.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text16(stmt, 2, file->file_name.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_int(stmt, 3, file->file_size);
-    sqlite3_bind_double(stmt, 4, file->duration);
+    sqlite3_bind_double(stmt, 4, 0);
     sqlite3_bind_int(stmt, 5, file->num_user_tags);
-    sqlite3_bind_text(stmt, 6, file->user_tags.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text16(stmt, 6, file->user_tags.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_int(stmt, 7, file->num_auto_tags);
-    sqlite3_bind_text(stmt, 8, file->auto_tags.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text16(stmt, 8, file->auto_tags.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_int(stmt, 9, file->user_bpm);
     sqlite3_bind_int(stmt, 10, file->user_key);
     sqlite3_bind_int(stmt, 11, file->auto_bpm);
@@ -256,25 +256,22 @@ Database::insert_file(
 // db_insert_files inserts entries in the audio_files database table data to 
 // insert comes from a vector of FileRecord structs
 //-----------------------------------------------------------------------------
-void 
-Database::insert_files (
-    ThreadSafeQueue<struct FileRecord *> *files
+void Database::insert_files (ThreadSafeQueue<struct FileRecord *> *files
 ) {
     // create statement to insert all members of explorer file struct
-    const char* sql =   "INSERT OR IGNORE INTO audio_files ("\
-                        "file_path,"\
-                        "file_name,"\
-                        "file_size,"\
-                        "duration,"\
-                        "num_user_tags,"\
-                        "user_tags,"\
-                        "num_auto_tags,"\
-                        "auto_tags,"\
-                        "user_bpm,"\
-                        "user_key,"\
-                        "auto_bpm,"\
-                        "auto_key"\
-                        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    const char* sql = "INSERT OR IGNORE INTO audio_files ("\
+        "file_path,"\
+        "file_name,"\
+        "file_size,"\
+        "num_user_tags,"\
+        "user_tags,"\
+        "num_auto_tags,"\
+        "auto_tags,"\
+        "user_bpm,"\
+        "user_key,"\
+        "auto_bpm,"\
+        "auto_key"\
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         panicf("db_insert_files: Error preparing statement.\n");
@@ -287,14 +284,13 @@ Database::insert_files (
         struct FileRecord* file;
         files->wait_pop(file);
         
-        sqlite3_bind_text(stmt, 1, file->file_path.c_str(), -1, SQLITE_STATIC);
-        sqlite3_bind_text(stmt, 2, file->file_name.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text16(stmt, 1, file->file_path.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text16(stmt, 2, file->file_name.c_str(), -1, SQLITE_STATIC);
         sqlite3_bind_int(stmt, 3, file->file_size);
-        sqlite3_bind_double(stmt, 4, file->duration);
         sqlite3_bind_int(stmt, 5, file->num_user_tags);
-        sqlite3_bind_text(stmt, 6, file->user_tags.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text16(stmt, 6, file->user_tags.c_str(), -1, SQLITE_STATIC);
         sqlite3_bind_int(stmt, 7, file->num_auto_tags);
-        sqlite3_bind_text(stmt, 8, file->auto_tags.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text16(stmt, 8, file->auto_tags.c_str(), -1, SQLITE_STATIC);
         sqlite3_bind_int(stmt, 9, file->user_bpm);
         sqlite3_bind_int(stmt, 10, file->user_key);
         sqlite3_bind_int(stmt, 11, file->auto_bpm);
@@ -316,26 +312,22 @@ Database::insert_files (
 // ----------------------------------------------------------------------------
 // Function to search files by name
 //-----------------------------------------------------------------------------
-std::vector<struct FileRecord>
-Database::search_by_name (
-    const char *query
-){
+void Database::search_by_name (std::vector<struct FileRecord> *search_result, const char *query) {
     // prepare sql statement
     sqlite3_stmt* stmt;
-    const char *sql =   "SELECT "\
-                        "file_path, "\
-                        "file_name, "\
-                        "file_size, "\
-                        "duration, "\
-                        "num_user_tags, "\
-                        "user_tags, "\
-                        "num_auto_tags, "\
-                        "auto_tags, "\
-                        "user_bpm, "\
-                        "user_key, "\
-                        "auto_bpm, "\
-                        "auto_key "\
-                        "FROM audio_files WHERE file_name LIKE ?;";
+    const char *sql = "SELECT "\
+        "file_path, "\
+        "file_name, "\
+        "file_size, "\
+        "num_user_tags, "\
+        "user_tags, "\
+        "num_auto_tags, "\
+        "auto_tags, "\
+        "user_bpm, "\
+        "user_key, "\
+        "auto_bpm, "\
+        "auto_key "\
+        "FROM audio_files WHERE file_name LIKE ?;";
     
     if (sqlite3_prepare_v2(this->db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         errlog("Database::search_by_name: Failed to prepare sql statement.\n");
@@ -350,34 +342,45 @@ Database::search_by_name (
     delete[] query_param;
 
     // Execute the statement and process the results
-    std::vector<FileRecord> search_result;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         struct FileRecord file;
-        
-        file.file_path = reinterpret_cast<const char*>(
-                            sqlite3_column_text(stmt, 0)
-                         );
-        file.file_name = reinterpret_cast<const char*>(
-                            sqlite3_column_text(stmt, 1)
-                         );
-        file.file_size = sqlite3_column_int(stmt, 2);
-        file.duration = sqlite3_column_int(stmt, 3);
-        file.num_user_tags = sqlite3_column_int(stmt, 4);
-        file.user_tags = reinterpret_cast<const char*>(
-                            sqlite3_column_text(stmt, 5)
-                        );
-        file.num_auto_tags = sqlite3_column_int(stmt, 6);
-        file.auto_tags = reinterpret_cast<const char*>(
-                            sqlite3_column_text(stmt, 7)
-                         );
-        file.user_bpm = sqlite3_column_int(stmt, 8);
-        file.user_key = sqlite3_column_int(stmt, 9);
-        file.auto_bpm = sqlite3_column_int(stmt, 10);
-        file.auto_key = sqlite3_column_int(stmt, 11);
 
-        search_result.push_back(file);
+        // retrieve file path
+        const void *text = sqlite3_column_text16(stmt, 0);
+        int text_size = sqlite3_column_bytes16(stmt, 0);
+        std::wstring path_string(reinterpret_cast<const wchar_t *>(text), text_size / sizeof(wchar_t));
+        file.file_path = path_string;
+
+        // retrieve file name
+        const void *name_text = sqlite3_column_text16(stmt, 0);
+        int name_text_size = sqlite3_column_bytes16(stmt, 0);
+        std::wstring name_string(reinterpret_cast<const wchar_t *>(text), text_size / sizeof(wchar_t));
+        file.file_name = name_string;
+
+        // retrieve file size
+        file.file_size = sqlite3_column_int(stmt, 2);
+        
+        // retrieve user tags
+        file.num_user_tags = sqlite3_column_int(stmt, 3);
+        const void *utags_text = sqlite3_column_text16(stmt, 0);
+        int utags_text_size = sqlite3_column_bytes16(stmt, 0);
+        std::wstring utags_string(reinterpret_cast<const wchar_t *>(text), utags_text_size / sizeof(wchar_t));
+        file.user_tags = utags_string;
+
+        // retrieve automatically generated tags
+        file.num_auto_tags = sqlite3_column_int(stmt, 3);
+        const void *atags_text = sqlite3_column_text16(stmt, 0);
+        int atags_text_size = sqlite3_column_bytes16(stmt, 0);
+        std::wstring atags_string(reinterpret_cast<const wchar_t *>(text), atags_text_size / sizeof(wchar_t));
+        file.user_tags = atags_string;
+
+        file.user_bpm = sqlite3_column_int(stmt, 7);
+        file.user_key = sqlite3_column_int(stmt, 8);
+        file.auto_bpm = sqlite3_column_int(stmt, 9);
+        file.auto_key = sqlite3_column_int(stmt, 10);
+
+        search_result->push_back(file);
     }
     
     sqlite3_finalize(stmt);
-    return search_result;
 }
