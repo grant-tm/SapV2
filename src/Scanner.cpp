@@ -1,8 +1,9 @@
 #include "Scanner.h"
-#include <iostream>
+
+int num_scanned = 0;
 
 // These delimiters are used to automatically generate tags from filenames
-bool inline char_is_delimiter (char ch) {
+bool inline char_is_delimiter (wchar_t ch) {
     return (ch == '_' || 
             ch == ' ' || 
             ch == '-' || 
@@ -34,8 +35,8 @@ char *to_cstring(const fs::path &p) {
 
 // to_lower converts characters to their lowercase equivalent.
 // This function is used to convert tags to lowercase in generate_auto_tags()
-char to_lower (char c) {
-    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+wchar_t to_lower(wchar_t c) {
+    return std::towlower(c);
 }
 
 // check if file extension is .mp3 or .wav
@@ -65,19 +66,19 @@ bool path_is_ascii(std::string path) {
 // the delimiters are set in char_is_delimiter()
 // tags must be 3 characters or greater
 // tags are returned in a vector of strings
-std::vector<std::string> generate_auto_tags(const std::string &file_name) {
+std::vector<std::wstring> generate_auto_tags(std::wstring file_name) {
 
-    std::vector<std::string> tags;
-    std::string token;
+    std::vector<std::wstring> tags;
+    std::wstring token;
 
     // for all the characters in the filename:
     // nondelimiter characters are accumualted in 'token'
     // when a delimiter is hit, save token if long enough
 
-    for (char ch : file_name) {
+    for (wchar_t ch : file_name) {
         if (!char_is_delimiter(ch)) [[likely]] {
             // tags are lowercase
-            token += to_lower(ch);
+            token += std::towlower(ch);
             continue;
         }
         else if (!token.empty()) [[unlikely]] {
@@ -89,7 +90,7 @@ std::vector<std::string> generate_auto_tags(const std::string &file_name) {
         }
     }
 
-    // push the reminaing token, if one
+    // push the reminaing token, if any
     if (!token.empty() && token.size() > 2) {
         tags.push_back(token);
     }
@@ -98,11 +99,11 @@ std::vector<std::string> generate_auto_tags(const std::string &file_name) {
 }
 
 // concatenate strings in a vector of strings into one space delimited string
-std::string concatenate_tags(const std::vector<std::string> &tags) {
-    std::string result;
+std::wstring concatenate_tags(const std::vector<std::wstring> &tags) {
+    std::wstring result;
     for (const auto &tag : tags) {
         if (!result.empty()) [[likely]] {
-            result += " ";
+            result += L" ";
         }
         result += tag;
     }
@@ -113,12 +114,9 @@ std::string concatenate_tags(const std::vector<std::string> &tags) {
 // queue files
 //=============================================================================
 
-void queue_files
-(
-    Database *db, 
-    const fs::path &dir_path, 
-    ThreadSafeQueue<fs::directory_entry> *proc_queue
-) {
+void queue_files (Database *db, const fs::path &dir_path, 
+    ThreadSafeQueue<fs::directory_entry> *proc_queue ) {
+    
     std::vector<std::thread> threads;
     std::mutex thread_mtx;
     int max_threads = 12;
@@ -159,7 +157,8 @@ void queue_files
 
 // when the recursive scan is done, stop the process queue
 void queue_all_files (Database *db, const fs::path &dir_path,
-                ThreadSafeQueue<fs::directory_entry> *proc_queue ) {
+    ThreadSafeQueue<fs::directory_entry> *proc_queue ) {
+    
     queue_files(db, dir_path, proc_queue);
     proc_queue->stop_producing();
 }
@@ -171,15 +170,15 @@ void queue_all_files (Database *db, const fs::path &dir_path,
 // Check if file meets the requirements to be analyzed and included in the db
 // Files must exist, be a regular file, and have a .mp3 or .wav extension.
 bool requires_processing (Database *db, const fs::directory_entry *file) {
-    char *path = to_cstring(file->path());
+    
+    std::wstring path = file->path().wstring();
 
-    if (file->is_regular_file() && validate_file_extension(file) &&
-        !db->entry_exists("audio_files", to_cstring(file->path().c_str()))) {
-        delete[] path;
+    if (file->is_regular_file() && 
+        validate_file_extension(file) &&
+        !db->entry_exists("audio_files", &path)) {
         return true;
     }
     else {
-        delete[] path;
         return false;
     }
 }
@@ -210,6 +209,12 @@ struct FileRecord *process_file (const fs::directory_entry &file) {
         try {
             WAV wav(file.path());
             wav.parse();
+            
+            //FourierTX ftx;
+            wav.print_file_path();
+            //ftx.chroma_features(wav.get_samples(), 512);
+            //errlog("\n");
+
             wav.close();
         }
         catch (...) {
@@ -221,19 +226,12 @@ struct FileRecord *process_file (const fs::directory_entry &file) {
     struct FileRecord *db_entry = new struct FileRecord;
 
     // identification
-    db_entry->file_path = to_string(file.path());
-    db_entry->file_name = to_string(file.path().filename());
-    db_entry->file_size = static_cast<int>(fs::file_size(file.path()));
-
-    // calculate file duration
-    db_entry->duration = 0;
-
-    // default user tags
-    db_entry->num_user_tags = 0;
-    db_entry->user_tags = "";
+    db_entry->file_path = file.path().c_str();
+    db_entry->file_name = file.path().filename().c_str();
+    db_entry->file_size = static_cast<size_t>(fs::file_size(file.path()));
 
     // generate auto tags
-    std::vector<std::string> tags = generate_auto_tags(db_entry->file_name);
+    std::vector<std::wstring> tags = generate_auto_tags(db_entry->file_name);
     db_entry->num_auto_tags = tags.size();
     db_entry->auto_tags = concatenate_tags(tags);
 

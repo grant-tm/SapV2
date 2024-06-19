@@ -2,6 +2,8 @@
 #define SCANNER_H
 
 // Standard Library Inclusions
+#include <iostream>
+#include <cwctype>
 #include <string>
 #include <vector>
 #include <filesystem>
@@ -14,7 +16,7 @@
 #include "ThreadSafeQueue.h"
 #include "FileRecord.h"
 #include "AudioFile.h"
-//#include "DetectKey.h"
+#include "FourierTX.h"
 
 // Definitions
 namespace fs = std::filesystem;
