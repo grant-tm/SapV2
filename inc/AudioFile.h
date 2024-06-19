@@ -44,15 +44,16 @@ public:
 
 	void print_file_path (void);
 
-protected:
+	std::vector<float> *get_samples (void);
 
+protected:
 	fs::path file_path;
 	ByteExtractor *file;
 	
 	int sample_rate;
 	int num_channels;
+
 	std::vector<float> samples;
-	
 };
 
 //=============================================================================

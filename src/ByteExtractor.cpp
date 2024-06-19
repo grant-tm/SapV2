@@ -64,7 +64,7 @@ void ByteExtractor::open (const fs::path &file_path) {
         panicf("Byte Extractor: error creating file mapping.");
     }
 
-    buffer = static_cast<char *>(MapViewOfFile(
+    buffer = static_cast<unsigned char *>(MapViewOfFile(
         map_handle,
         FILE_MAP_READ,
         0,
@@ -115,39 +115,6 @@ bool ByteExtractor::is_open (void) {
 }
 
 //-----------------------------------------------------------------------------
-// read_byte
-// ----------------------------------------------------------------------------
-// Read 1 byte as a char at the cursor head. Advances the cursor 1 byte.
-//-----------------------------------------------------------------------------
-char ByteExtractor::read_byte (void) {
-    if (current_idx >= buffer_size || current_idx < 0) {
-        return NULL;
-    }
-    return buffer[current_idx++];
-}
-
-//-----------------------------------------------------------------------------
-// read_bytes
-// ----------------------------------------------------------------------------
-// Fill a provided char vector with n bytes at the cursor head. Advances the
-// cursor n bytes.
-//-----------------------------------------------------------------------------
-void ByteExtractor::read_bytes (std::vector<char> *container, int bytes) {
-
-    if (container == nullptr) {
-        current_idx = min(current_idx + bytes, buffer_size);
-        return;
-    }
-
-    if (current_idx + bytes > buffer_size) {
-        bytes = buffer_size - current_idx;
-    }
-
-    container->assign(buffer + current_idx, buffer + current_idx + bytes);
-    current_idx += bytes;
-}
-
-//-----------------------------------------------------------------------------
 // seek_bytes
 // ----------------------------------------------------------------------------
 // Move the cursor head n bytes (positive or negative) in the buffer.
@@ -155,6 +122,15 @@ void ByteExtractor::read_bytes (std::vector<char> *container, int bytes) {
 int ByteExtractor::seek_bytes (int bytes) {
     int new_idx = max(current_idx + bytes, 0);
     current_idx = min(current_idx + bytes, buffer_size - 1);
+    return current_idx;
+}
+
+//-----------------------------------------------------------------------------
+// get_cursor
+// ----------------------------------------------------------------------------
+// Get the index of the cursor within the ByteExtractor buffer.
+//-----------------------------------------------------------------------------
+size_t ByteExtractor::get_cursor (void) {
     return current_idx;
 }
 
@@ -167,6 +143,39 @@ int ByteExtractor::goto_byte (int byte) {
     byte = max(byte, 0);
     current_idx = min(static_cast<size_t>(byte), buffer_size - 1);
     return current_idx;
+}
+
+//-----------------------------------------------------------------------------
+// read_byte
+// ----------------------------------------------------------------------------
+// Read 1 byte as a char at the cursor head. Advances the cursor 1 byte.
+//-----------------------------------------------------------------------------
+unsigned char ByteExtractor::read_byte (void) {
+    if (current_idx >= buffer_size || current_idx < 0) {
+        return NULL;
+    }
+    return buffer[current_idx++];
+}
+
+//-----------------------------------------------------------------------------
+// read_bytes
+// ----------------------------------------------------------------------------
+// Fill a provided char vector with n bytes at the cursor head. Advances the
+// cursor n bytes.
+//-----------------------------------------------------------------------------
+void ByteExtractor::read_bytes (std::vector<unsigned char> *container, int bytes) {
+
+    if (container == nullptr) {
+        current_idx = min(current_idx + bytes, buffer_size);
+        return;
+    }
+
+    if (current_idx + bytes > buffer_size) {
+        bytes = buffer_size - current_idx;
+    }
+
+    container->assign(buffer + current_idx, buffer + current_idx + bytes);
+    current_idx += bytes;
 }
 
 //-----------------------------------------------------------------------------
@@ -217,9 +226,47 @@ int ByteExtractor::read_int (int num_bytes) {
 
     int result = 0;
     for (int i = 0; i < num_bytes; i++) {
-        result |= static_cast<unsigned char>(buffer[current_idx + i]) << (i*8);
+        result |= buffer[current_idx + i] << (i*8);
     }
     current_idx += num_bytes;
 
     return result;
+}
+
+//-----------------------------------------------------------------------------
+// get_byte
+// ----------------------------------------------------------------------------
+// Random access byte in ByteExtractor's internal buffer.
+//-----------------------------------------------------------------------------
+unsigned char ByteExtractor::get_byte (size_t idx) {
+    if (idx < 0 || idx > buffer_size) {
+        return NULL;
+    }
+    return buffer[idx];
+}
+
+//-----------------------------------------------------------------------------
+// get_loc
+// ----------------------------------------------------------------------------
+// Get the mem location of a byte within the ByteExtractor's internal buffer.
+//-----------------------------------------------------------------------------
+const unsigned char *ByteExtractor::get_loc (void) {
+    if (current_idx < 0 || current_idx > buffer_size) {
+        return nullptr;
+    }
+
+    return buffer + current_idx;
+}
+
+//-----------------------------------------------------------------------------
+// get_byte_loc
+// ----------------------------------------------------------------------------
+// Get the mem location of a byte within the ByteExtractor's internal buffer.
+//-----------------------------------------------------------------------------
+const unsigned char *ByteExtractor::get_byte_loc (size_t idx) {
+    if (idx < 0 || idx > buffer_size) {
+        return nullptr;
+    }
+    
+    return buffer + idx;
 }
